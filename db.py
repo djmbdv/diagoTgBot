@@ -41,8 +41,11 @@ class Database:
 
 	def insertMany(self,rows):
 		self.conn = sqlite3.connect(self.file_name)
-		c = self.conn.cursor()	
-		c.executemany("INSERT INTO users VALUES (?,?,?,?,?,?)", rows)
+		c = self.conn.cursor()
+		try:
+			c.executemany("INSERT INTO users VALUES (?,?,?,?,?,?)", rows)
+		except:
+			pass
 		self.conn.commit()
 
 	def insertGroup(self,rows):
@@ -50,8 +53,10 @@ class Database:
 		c = self.conn.cursor()
 		for row in rows:
 			id = (row[0],)		
-			if len(c.execute("SELECT id FROM users WHERE id = ?", id).fetchall()) == 0:
+			try:
 				c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", row)
+			except:
+				pass
 		self.conn.commit()
 
 	def changeStatus(self,id):

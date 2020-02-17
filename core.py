@@ -4,6 +4,7 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.channels import InviteToChannelRequest
 from telethon.tl.functions.messages import AddChatUserRequest
 from telethon.errors.rpcerrorlist import *
+from telethon.tl.types import InputPeerChat 
 import asyncio
 import threading
 import time
@@ -20,52 +21,111 @@ class Telegrama:
 	def __init__(self, database):
 		self.clients = []
 		self.database = database
+		self.current = 0
+		self.errores = 0
 
 
-	def groupLookout(group):
+	async def groupLookout(self,group, client):
 		add = []
-		users = self.client.get_participants(group)
+		try:
+			users = await client.get_participants(group)
+		except:
+			print(group, " whitout users")
+			return
 		for u in users:
-			t = (str(u.id), u.username, u.first_name, u.last_name, u.phone, 0, )		
+			try:
+				username = u.username
+			except:
+				username = ""
+			t = (str(u.id), username, u.first_name, u.last_name, u.phone, 0, )		
 			add.append(t)	
-		db.insertGroup(add)
+		self.database.insertGroup(add)
 
-	async def addToGroup(group, arr):
+	async def explore_channels_and_groups(self):
+		groups = self.database.listGroups()
+		div = len(groups)/ len(self.clients)
+		print(self.clients)
+		print("Scanning channels and groups")
+		counter  = 0
+		dif = 0
+		for c in self.clients:
+			groups_part = groups[counter: counter+int(div)]
+			for g in groups_part:
+				await self.groupLookout(g[0],c)
+				num = int(self.database.stats(0)[0])
+				dif = num - dif
+				me = await c.get_me()
+				print("Scanned group/channel > ", g[0]," by client ",me.phone, "+" +str(dif),"users", num)
+				dif = num
+		total_users = self.database.stats(0)
+		print("users added: ", total_users)
+
+
+	async def add_to_group(self,group,user):
+		self.current+=1
+		self.current%= len(self.clients)
+		client  = self.clients[self.current]
+		id_user = int(user[0][0])
+		print("Adding -> ", user ," to", group , " by ", client)
+		print("id_user" ,id_user)
+		try:
+			print(await client.get_entity(id_user))
+			await client(InviteToChannelRequest(group,[id_user]))
+			self.database.changeStatus((id_user,))
+		except(UserPrivacyRestrictedError):
+			self.errores+=1
+			print(user,  ":-User settings not allow this operation")
+			self.database.changeStatusError((id_user,))
+		except(UserNotMutualContactError):
+			self.errores+=1
+			print(user,  ":-The provided user is not a mutual contact")
+			self.database.changeStatusError((id_user,))
+		except(UserBotError):
+			self.errores+=1
+			print(user,  ":-The provided user is a bot")
+			self.database.changeStatusError((id_user,))
+		
+	async def add_all_to_group(self,group):
+		step = 20.0/len(self.clients)
+		user = self.database.selectSome(1)
+		while(len(user) > 0):
+			
+			await self.add_to_group(group,user)
+			user = self.database.selectSome(1)
+			print("errores", self.errores," ")
+			await asyncio.sleep(step)
+
+	async def addToGroup(self,group, arr,client):
 		errores = 0
 		for user in arr:
 			id_user = int(user[0])
-			await asyncio.sleep(5)
-			print("Agregando a ", user )
-			try:
-				print()		
+			await asyncio.sleep(20)
+			print("Adding -> ", user )
+			try:	
 				await client(InviteToChannelRequest(group,[id_user]))
-				db.changeStatus((id_user,))
+				self.database.changeStatus((id_user,))
 			except(UserPrivacyRestrictedError):
 				errores+=1
 				print(user,  ":-User settings not allow this operation")
-				db.changeStatusError((id_user,))
+				self.database.changeStatusError((id_user,))
 			except(UserNotMutualContactError):
 				errores+=1
 				print(user,  ":-The provided user is not a mutual contact")
-				db.changeStatusError((id_user,))
+				self.database.changeStatusError((id_user,))
 			except(UserBotError):
 				errores+=1
 				print(user,  ":-The provided user is a bot")
-				db.changeStatusError((id_user,))
+				self.database.changeStatusError((id_user,))
 		print('Clients with errors ',errores)
 
-	def lookAllGroups():
-		groups = db.listGroups()
-		for gr in groups:
-			groupLookout(gr[0])
-
 class TelegramaManager:
-	def __init__(self,fileUsers, fileChanels):
+	def __init__(self,fileUsers, fileChanels,t_group):
 		self.fileUsers = fileUsers
 		self.fileChanels = fileChanels
-		self.database = Database('telegrama3.db')
+		self.database = Database('telegrama4.db')
 		self.database.createTable()
 		self.telegrama  =  Telegrama(self.database)
+		self.target_group = t_group
 
 	def generate_channels(self):
 		with open(self.fileChanels, newline='') as csvfile:
@@ -86,21 +146,20 @@ class TelegramaManager:
 	def generate_users(self):
 		with open(self.fileUsers, newline='') as csvfile:
 			list_reader = csv.reader(csvfile)
-			users = []
 			l = 0
 			for row in list_reader:
 				g = re.findall(r'([0-9]+)', row[0])
 				f = re.findall(r'([0-9a-z]+)', row[1])
 				if(len(f[0]) == 32):
 					try:
-						users.append((int(g[0]),f[0]))
+						l+=1
+						api_id = int(g[0])
+						api_hash = f[0]
+						print(api_id, "--")
+						client = TelegramClient('client_'+ g[0], api_id, api_hash).start()
+						self.telegrama.clients.append(client)
 					except:
 						pass
-			self.telegrama.clients = users
-			print("Added",len(users),"users")
+			print("Added",len(self.telegrama.clients),"users")
 		
 
-
-
-class TelegramaInput:
-	pass
